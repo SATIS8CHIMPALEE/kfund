@@ -2,7 +2,10 @@
 kfund, short for my [fun](kfd/fun) with kfd exploit.
 
 ## Supported Device 
-iPhone 14 Pro/Pro Max on iOS 16.1.2 (Currently only working with smith exploit)
+Experimental dynamic patchfinder is now working (patchfinder only works with landa/physpuppet exploit), <br>
+so...<br><br>
+Supposed to be work: <br>
+iOS/iPadOS 16.0-16.6.1 
 
 ## What you can do with this?
 ### utils.m

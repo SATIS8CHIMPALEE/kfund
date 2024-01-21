@@ -24,13 +24,14 @@
 #include "cs_blobs.h"
 #include "GPU_CoreSight.h"
 #include "ppl/pplrw.h"
+#include "kpf/patchfinder.h"
 
 int funUcred(uint64_t proc) {
     uint64_t proc_ro = kread64(proc + off_p_proc_ro);
     uint64_t ucreds = kread64(proc_ro + off_p_ro_p_ucred);
     
     uint64_t cr_label_pac = kread64(ucreds + off_u_cr_label);
-    uint64_t cr_label = cr_label_pac | 0xffffff8000000000;
+    uint64_t cr_label = unsign_kptr(cr_label_pac);
     printf("[i] self ucred->cr_label: 0x%llx\n", cr_label);
     
     uint64_t cr_posix_p = ucreds + off_u_cr_posix;
@@ -133,7 +134,7 @@ uint64_t fun_ipc_entry_lookup(mach_port_name_t port_name) {
     printf("[i] self proc->proc_ro->pr_task: 0x%llx\n", pr_task);
     
     uint64_t itk_space_pac = kread64(pr_task + off_task_itk_space);
-    uint64_t itk_space = itk_space_pac | 0xffffff8000000000;
+    uint64_t itk_space = unsign_kptr(itk_space_pac);
     printf("[i] self task->itk_space: 0x%llx\n", itk_space);
     
     uint32_t port_index = MACH_PORT_INDEX(port_name);
@@ -150,13 +151,13 @@ uint64_t fun_ipc_entry_lookup(mach_port_name_t port_name) {
     printf("[i] entry: 0x%llx\n", entry);
     
     uint64_t object_pac = kread64(entry + off_ipc_entry_ie_object);
-    uint64_t object = object_pac | 0xffffff8000000000;
+    uint64_t object = unsign_kptr(object_pac);
     
     uint32_t ip_bits = kread32(object + off_ipc_object_io_bits);
     uint32_t ip_refs = kread32(object + off_ipc_object_io_references);
     
     uint64_t kobject_pac = kread64(object + off_ipc_port_ip_kobject);
-    uint64_t kobject = kobject_pac | 0xffffff8000000000;
+    uint64_t kobject = unsign_kptr(kobject_pac);
     printf("[i] ipc_port: ip_bits 0x%x, ip_refs 0x%x\n", ip_bits, ip_refs);
     printf("[i] ip_kobject: 0x%llx\n", kobject);
     
@@ -206,7 +207,7 @@ uint64_t print_key_value_in_os_dict(uint64_t os_dict) {
         //https://github.com/apple-oss-distributions/xnu/blob/xnu-8792.41.9/libkern/libkern/c%2B%2B/OSDictionary.h#L138
         os_dict_entry_ptr = kread64(os_dict + 0x20/*OS_DICTIONARY_DICT_ENTRY_OFF*/);
         if(os_dict_entry_ptr != 0) {
-            os_dict_entry_ptr = os_dict_entry_ptr | 0xffffff8000000000;
+            os_dict_entry_ptr = unsign_kptr(os_dict_entry_ptr);
             printf("[i] os_dict_entry_ptr: 0x%llx\n", os_dict_entry_ptr);
             os_dict_cnt = kread32(os_dict + 0x14/*OS_DICTIONARY_COUNT_OFF*/);
             if(os_dict_cnt != 0) {
@@ -226,7 +227,7 @@ uint64_t print_key_value_in_os_dict(uint64_t os_dict) {
                     if(string_ptr == 0) {
                         break;
                     }
-                    string_ptr = string_ptr | 0xffffff8000000000;
+                    string_ptr = unsign_kptr(string_ptr);
                     kreadbuf(string_ptr, cur_key, cur_key_len);
                     printf("[+] key_str: %s, key_str_len: 0x%x\n", cur_key, cur_key_len);
                     
@@ -239,7 +240,7 @@ uint64_t print_key_value_in_os_dict(uint64_t os_dict) {
                         continue;
                     }
                     val_ptr = kread64(os_dict_entry.val + 0x18/*?*/);
-                    val_ptr = val_ptr | 0xffffff8000000000;
+                    val_ptr = unsign_kptr(val_ptr);
                     if(val_ptr == 0) {
                         printf("[-] val_ptr = 0\n");
                         continue;
@@ -274,22 +275,14 @@ uint64_t fun_nvram_dump(void) {
     return 0;
 }
 
-int do_unsandbox(void) {
-    grant_full_disk_access(^(NSError* error) {
-        if(error != nil) {
-            NSLog(@"[-] grant_full_disk_access returned error: %@", error);
-        }
-    });
-    
-    return 0;
-}
-
 int do_fun(void) {
 
     _offsets_init();
     
     uint64_t kslide = get_kslide();
-    uint64_t kbase = 0xfffffff007004000 + kslide;
+    uint64_t vm_kernel_link_addr = get_vm_kernel_link_addr();
+    
+    uint64_t kbase = vm_kernel_link_addr + kslide;
     printf("[i] Kernel base: 0x%llx\n", kbase);
     printf("[i] Kernel slide: 0x%llx\n", kslide);
     uint64_t kheader64 = kread64(kbase);
@@ -310,6 +303,16 @@ int do_fun(void) {
     uint64_t orig_to_vnode = 0;
     funVnodeRedirectFile("/sbin/launchd", "/System/Library/Audio/UISounds/photoShutter.caf", &orig_to_vnode, &orig_nc_vp);
     funVnodeUnRedirectFile(orig_to_vnode, orig_nc_vp);
+    
+//    fun_proc_dump_entitlements(getProcByName("tccd"));
+//    fun_vnode_dump_entitlements("/System/Library/CoreServices/ReportCrash");
+//    fun_nvram_dump();
+    
+//    uint64_t vm_map = kread64(get_kerntask() + 0x28) | 0xffffff8000000000;
+//    uint64_t vm_map_pmap = kread64(vm_map + 0x40) | 0xffffff8000000000;
+//    uint64_t tte = kread64(vm_map_pmap);
+//    printf("tte: 0x%llx\n", tte);
+//    read+0x0, 0xfffffff011e18000
     
 //    test_kttr();
 //    test_pplrw();

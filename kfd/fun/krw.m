@@ -8,11 +8,22 @@
 #include "krw.h"
 #include "libkfd.h"
 #include "helpers.h"
+#include "kpf/patchfinder.h"
 
 uint64_t _kfd = 0;
+uint64_t unsign_kptr(uint64_t pac_kaddr) {
+    if ((pac_kaddr & 0xFFFFFF0000000000) == 0xFFFFFF0000000000) {
+        return pac_kaddr;
+    }
+    if(T1SZ_BOOT != 0) {
+        return pac_kaddr |= ~((1ULL << (64U - T1SZ_BOOT)) - 1U);
+    }
+    return pac_kaddr;
+}
 
 uint64_t do_kopen(uint64_t puaf_pages, uint64_t puaf_method, uint64_t kread_method, uint64_t kwrite_method)
 {
+//    remove([NSString stringWithFormat:@"%@/Documents/kfund_offsets.plist", NSHomeDirectory()].UTF8String);  //TEMPORARY: remove offsets plist to check if patchfinder is working
     _kfd = kopen(puaf_pages, puaf_method, kread_method, kwrite_method);
     return _kfd;
 }
@@ -21,6 +32,43 @@ void do_kclose(void)
 {
     kclose((struct kfd*)(_kfd));
 }
+
+void early_kread(uint64_t kfd, u64 kaddr, void* uaddr, u64 size)
+{
+    kread((struct kfd*)(kfd), kaddr, uaddr, size);
+}
+
+uint64_t early_kread64(uint64_t kfd, uint64_t where) {
+    uint64_t out;
+    kread((struct kfd*)(kfd), where, &out, sizeof(uint64_t));
+    return out;
+}
+
+uint32_t early_kread32(uint64_t kfd, uint64_t where) {
+    return early_kread64(kfd, where) & 0xffffffff;
+}
+
+void early_kreadbuf(uint64_t kfd, uint64_t kaddr, void* output, size_t size)
+{
+    uint64_t endAddr = kaddr + size;
+    uint32_t outputOffset = 0;
+    unsigned char* outputBytes = (unsigned char*)output;
+    
+    for(uint64_t curAddr = kaddr; curAddr < endAddr; curAddr += 4)
+    {
+        uint32_t k = early_kread32(kfd, curAddr);
+
+        unsigned char* kb = (unsigned char*)&k;
+        for(int i = 0; i < 4; i++)
+        {
+            if(outputOffset == size) break;
+            outputBytes[outputOffset] = kb[i];
+            outputOffset++;
+        }
+        if(outputOffset == size) break;
+    }
+}
+
 
 void do_kread(u64 kaddr, void* uaddr, u64 size)
 {
@@ -76,7 +124,7 @@ uint64_t kread64(uint64_t where) {
 
 //Thanks @jmpews
 uint64_t kread64_smr(uint64_t where) {
-    uint64_t value = kread64(where) | 0xffffff8000000000;
+    uint64_t value = unsign_kptr(kread64(where));
     if((value & 0x400000000000) != 0)
         value &= 0xFFFFFFFFFFFFFFE0;
     return value;
@@ -127,8 +175,29 @@ uint64_t do_phystokv(uint64_t what) {
 uint64_t kread64_ptr(uint64_t kaddr) {
     uint64_t ptr = kread64(kaddr);
     if ((ptr >> 55) & 1) {
-        return ptr | 0xFFFFFF8000000000;
+        return unsign_kptr(ptr);
     }
 
     return ptr;
+}
+
+void kreadbuf(uint64_t kaddr, void* output, size_t size)
+{
+    uint64_t endAddr = kaddr + size;
+    uint32_t outputOffset = 0;
+    unsigned char* outputBytes = (unsigned char*)output;
+    
+    for(uint64_t curAddr = kaddr; curAddr < endAddr; curAddr += 4)
+    {
+        uint32_t k = kread32(curAddr);
+
+        unsigned char* kb = (unsigned char*)&k;
+        for(int i = 0; i < 4; i++)
+        {
+            if(outputOffset == size) break;
+            outputBytes[outputOffset] = kb[i];
+            outputOffset++;
+        }
+        if(outputOffset == size) break;
+    }
 }
